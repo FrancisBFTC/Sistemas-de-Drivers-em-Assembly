@@ -65,9 +65,59 @@ _EN:pop 	ecx
 	pop 	ebx
 ret
 
+
+; -----------------------------------------------------------------------------
+; PCI_Check_Device - Verifica um Dispositivo PCI
+; IN:   AL  = Bus number
+;		BL  = Device/Slot number
+; OUT:	None.
+;	Registradores preservados
 PCI_Check_Device:
 	pushad
 	
+	mov 	cl, 0          ; Função 0
+	call 	PCI_Get_VendorID
+	cmp 	word[Vendor], 0xFFFF
+	je 		DeviceNoExist
+	
+	call 	PCI_Check_Function
+	call 	PCI_Get_HeaderType
+	and 	word[Header], 0x80  
+	cmp 	word[Header], 0        ; Se bit 7 estiver setado então
+	jnz 	Multi-Func_Dev         ; É um dispositivo multi-função
+	
+Multi-Func_Dev:
+	mov 	cl, 1
+	Loop_Check_Functions:
+		cmp 	cl, 8
+		jb 		Check_Vendor_Func
+		
+	Check_Vendor_Func:
+		call 	PCI_Get_VendorID
+		cmp 	word[Vendor], 0xFFFF
+		je 		MessageFunc
+		inc 	cl
+		jmp 	Check_Vendor_Func
+	MessageFunc:
+		mov 	si, MsgChkFun
+		call 	Print_String
+		inc 	cl
+		jmp 	Check_Vendor_Func
+	
+DeviceNoExist:
+	;stc
+	mov 	si, MsgChkDev
+	call 	Print_String
+ReturnDevice:
+	popad
+ret
+MsgChkDev 	db "Não há dispositivos pra este barramento!",13,10,0
+MsgChkFun 	db "Esta função não é válida!",13,10,0
+
+
+
+PCI_Check_Function:
+	pushad
 	
 	popad
 ret
@@ -87,7 +137,7 @@ PCI_Get_VendorID:
 	mov 	dl, 0                  ; Offset 0 -> Fabricante
 	call 	PCI_Config_Word        ; Efetua a leitura PCI
 	
-	mov 	word[Vendor], eax      ; Armazene o retorno em Vendor
+	mov 	word[Vendor], ax       ; Armazene o retorno em Vendor
 	
 	pop 	edx
 	pop 	ecx
@@ -110,7 +160,7 @@ PCI_Get_DeviceID:
 	mov 	dl, 2                  ; Offset 2 -> Dispositivo
 	call 	PCI_Config_Word        ; Efetua a leitura PCI
 	
-	mov 	word[Device], eax      ; Armazene o retorno em Device
+	mov 	word[Device], ax       ; Armazene o retorno em Device
 	
 	pop 	edx
 	pop 	ecx
@@ -133,7 +183,7 @@ PCI_Get_HeaderType:
 	mov 	dl, 0x0E               ; Offset 14 -> Tipo De Cabeçalho
 	call 	PCI_Config_Word        ; Efetua a leitura PCI
 	
-	mov 	word[Header], eax      ; Armazene o retorno em Header
+	mov 	word[Header], ax       ; Armazene o retorno em Header
 	
 	pop 	edx
 	pop 	ecx
@@ -145,9 +195,6 @@ Header 	dw 	0x0000
 ;Configuration Mechanism One has two IO port rages associated with it.
 ;The address port (0xcf8-0xcfb) and the data port (0xcfc-0xcff).
 ;A configuration cycle consists of writing to the address port to specify which device and register you want to access and then reading or writing the data to the data port.
-
-PCI_CONFIG_ADDRESS	EQU	0x0CF8
-PCI_CONFIG_DATA		EQU	0x0CFC
 
 ;ddress dd 10000000000000000000000000000000b
 ;          /\     /\      /\   /\ /\    /\
