@@ -19,26 +19,72 @@ func 	db 0
 offs 	db 0
 pdata 	dd 0
 
+os_PCIEnabled  db 0
+
+init_pci:
+	mov 	eax, 0x80000000		; Bit 31 set for 'Enabled'
+	mov 	ebx, eax
+	mov 	dx, PCI_ADDRESS
+	out 	dx, eax
+	in 		eax, dx
+	xor 	edx, edx
+	cmp 	eax, ebx
+	sete 	dl				; Set byte if equal, otherwise clear
+	mov 	byte [os_PCIEnabled], dl
+ret
+
+
 ; -----------------------------------------------------------------------------
-; PCI_Conf_Word - Ler/Escreve de/para um registro um dispositivo PCI
-; IN:	AH  = Read/Write
-;       AL  = Bus number
+; os_pci_read_reg -- Read from a register on a PCI device
+;  IN:	BL  = Bus number
+;	CL  = Device/Slot/Function number
+;	DL  = Register number (0-15)
+; OUT:	EAX = Register information
+;	All other registers preserved
+os_pci_read_reg:
+	push edx
+	push ecx
+	push ebx
+
+	shl ebx, 16			; Move Bus number to bits 23 - 16
+	shl ecx, 8			; Move Device/Slot/Fuction number to bits 15 - 8
+	mov bx, cx
+	shl edx, 2
+	mov bl, dl
+	and ebx, 0x00ffffff		; Clear bits 31 - 24
+	or ebx, 0x80000000		; Set bit 31
+	mov eax, ebx
+	mov dx, PCI_ADDRESS
+	out dx, eax
+	mov dx, PCI_DATA
+	in eax, dx
+
+	pop ebx
+	pop ecx
+	pop edx
+ret
+; -----------------------------------------------------------------------------
+
+
+	
+; -----------------------------------------------------------------------------
+; PCI_Read_Word - Ler de um registro um dispositivo PCI
+; IN:   AL  = Bus number
 ;		BL  = Device/Slot number
 ;		CL  = Function number
-; 		DL  = Register/Offset number
+; 		DL  = Offset number
 ; OUT:	EAX = Register information
-;	Registradores preservados
-PCI_Config_Word:
+PCI_Read_Word:
 	push 	ebx
 	push 	ecx
-	push 	eax
+	push 	edx
 	
+	xor 	eax, eax
 	shl 	eax, 16
-	shl 	ebx, 8
+	shl 	ebx, 11
 	or 		eax, ebx
 	shl 	ecx, 8
 	or 		eax, ecx
-	push 	edx
 	and 	edx, 0xFC
 	or 	 	eax, edx
 	and 	eax, 0x00FFFFFF
@@ -46,14 +92,8 @@ PCI_Config_Word:
 	mov 	dx, PCI_ADDRESS
 	out 	dx, eax
 	mov 	dx, PCI_DATA
-	pop 	eax
-	and 	ah, PCI_READ
-	jz 		R_H
-	mov 	eax, [pdata]
-	out 	dx, eax
-	jmp 	_EN
+    in 		eax, dx
 	
-R_H:in 		eax, dx
 	pop 	edx
 	and 	edx, 0x02
 	shl 	edx, 3          ; multiplique por 8
@@ -61,7 +101,42 @@ R_H:in 		eax, dx
 	shr 	eax, cl
 	and 	eax, 0xFFFF
 	
-_EN:pop 	ecx
+    pop 	ecx
+	pop 	ebx
+ret
+
+
+
+; -----------------------------------------------------------------------------
+; PCI_Write_Word - Escreve para um registro um dispositivo PCI
+; IN:   AL  = Bus number
+;		BL  = Device/Slot number
+;		CL  = Function number
+; 		DL  = Offset number
+; OUT:	None.
+PCI_Write_Word:
+	push 	ebx
+	push 	ecx
+	push 	edx
+	
+	xor 	eax, eax
+	shl 	eax, 16
+	shl 	ebx, 11
+	or 		eax, ebx
+	shl 	ecx, 8
+	or 		eax, ecx
+	and 	edx, 0xFC
+	or 	 	eax, edx
+	and 	eax, 0x00FFFFFF
+	or 		eax, 0x80000000
+	mov 	dx, PCI_ADDRESS
+	out 	dx, eax
+	mov 	dx, PCI_DATA
+	mov 	eax, [pdata]
+	out 	dx, eax
+	
+	pop 	edx
+    pop 	ecx
 	pop 	ebx
 ret
 
@@ -80,39 +155,59 @@ PCI_Check_Device:
 	cmp 	word[Vendor], 0xFFFF
 	je 		DeviceNoExist
 	
-	call 	PCI_Check_Function
+	; EXIBIR INFORMAÇÕES ----------------
+	push 	ax
+	mov 	ax, word[Vendor]
+	call 	Print_Hexa_Value16
+	mov 	ax, 0x0E20
+	int 	0x10
+	mov 	ax, 0x00
+	int 	0x16
+	pop 	ax
+	; -----------------------------------
+		
+	;call 	PCI_Check_Function
 	call 	PCI_Get_HeaderType
 	and 	word[Header], 0x80  
 	cmp 	word[Header], 0        ; Se bit 7 estiver setado então
-	jnz 	Multi-Func_Dev         ; É um dispositivo multi-função
-	
-Multi-Func_Dev:
+	jz  	ReturnDevice           ; Não É um dispositivo multi-função
+Multi_Func_Dev:                    ; É um.. multi
 	mov 	cl, 1
 	Loop_Check_Functions:
 		cmp 	cl, 8
-		jb 		Check_Vendor_Func
+		jnb 	ReturnDevice
 		
-	Check_Vendor_Func:
 		call 	PCI_Get_VendorID
 		cmp 	word[Vendor], 0xFFFF
-		je 		MessageFunc
+		jne 	CheckFunction
+	
 		inc 	cl
-		jmp 	Check_Vendor_Func
-	MessageFunc:
-		mov 	si, MsgChkFun
+		jmp 	Loop_Check_Functions
+	CheckFunction:
+		;call 	PCI_Check_Function
+		
+		; EXIBIR INFORMAÇÕES ----------------
+		push 	ax
+		mov 	si, SigMsg
 		call 	Print_String
+		mov 	ax, word[Vendor]
+		call 	Print_Hexa_Value16
+		mov 	ax, 0x00
+		int 	0x16
+		pop 	ax
+	    ; -----------------------------------
+	
 		inc 	cl
-		jmp 	Check_Vendor_Func
+		jmp 	Loop_Check_Functions
 	
 DeviceNoExist:
-	;stc
-	mov 	si, MsgChkDev
-	call 	Print_String
+	stc
 ReturnDevice:
 	popad
 ret
-MsgChkDev 	db "Não há dispositivos pra este barramento!",13,10,0
-MsgChkFun 	db "Esta função não é válida!",13,10,0
+SigMsg   	db " -",0
+MsgChkFun 	db "|No Function|    ",13,10,0
+NameBus 	db "Bus: ",0
 
 
 
@@ -122,51 +217,80 @@ PCI_Check_Function:
 	popad
 ret
 
+
+; -----------------------------------------------------------------------------
+; PCI_Check_All_Buses - Brute Force Scan - All bus, All Slots & All Possibly funcs
+; IN:   None.
+; OUT:	None.
+;	Registradores preservados
+PCI_Check_All_Buses:
+	pushad
+	mov 	al, 0
+	loop_all_buses1:
+		cmp 	al, 255        ; Ler os primeiros 4 barramentos
+		jbe  	init_loop_bus
+		jmp 	return_checkb
+		
+	init_loop_bus:
+		mov 	bl, 0
+	loop_all_buses2:
+		cmp 	bl, 32
+		jnb 	return_all_buses
+		call 	PCI_Check_Device
+		inc 	bl
+		jmp 	loop_all_buses2
+		
+	return_all_buses:
+		inc 	al
+		jmp 	loop_all_buses1
+return_checkb:
+	popad
+ret
+; -----------------------------------------------------------------------------
+
 ; -----------------------------------------------------------------------------
 ; PCI_Get_VendorID - Retorna o ID do fabricante do dispositivo PCI
 ; IN:   AL  = Bus number
 ;		BL  = Device/Slot number
+; 		CL  = Função
 ; OUT:	EAX = ID do Fabricante
-;	Registradores preservados
 PCI_Get_VendorID:
+	push 	eax
 	push 	ecx
 	push 	edx
-	
-	mov 	ah, PCI_READ           ; Leitura do PCI
-	mov 	cl, 0                  ; Função 0
+
 	mov 	dl, 0                  ; Offset 0 -> Fabricante
-	call 	PCI_Config_Word        ; Efetua a leitura PCI
-	
+	call 	PCI_Read_Word          ; Efetua a leitura PCI
 	mov 	word[Vendor], ax       ; Armazene o retorno em Vendor
 	
 	pop 	edx
 	pop 	ecx
+	pop 	eax
 ret
 Vendor 	dw 	0x0000
-
+; -----------------------------------------------------------------------------
 
 ; -----------------------------------------------------------------------------
 ; PCI_Get_DeviceID - Retorna o ID do dispositivo PCI
 ; IN:   AL  = Bus number
 ;		BL  = Device/Slot number
+;       CL  = Função
 ; OUT:	EAX = ID do Dispositivo
-;	Registradores preservados
 PCI_Get_DeviceID:
+	push 	eax
 	push 	ecx
 	push 	edx
 	
-	mov 	ah, PCI_READ           ; Leitura do PCI
-	mov 	cl, 0                  ; Função 0
 	mov 	dl, 2                  ; Offset 2 -> Dispositivo
-	call 	PCI_Config_Word        ; Efetua a leitura PCI
-	
+	call 	PCI_Read_Word          ; Efetua a leitura PCI
 	mov 	word[Device], ax       ; Armazene o retorno em Device
 	
 	pop 	edx
 	pop 	ecx
+	pop 	eax
 ret
 Device 	dw 	0x0000
-
+; -----------------------------------------------------------------------------
 
 ; -----------------------------------------------------------------------------
 ; PCI_Get_HeaderType - Retorna o Tipo de Cabeçalho (Header)
@@ -174,22 +298,21 @@ Device 	dw 	0x0000
 ;		BL  = Device/Slot number
 ; 		CL  = Função
 ; OUT:	EAX = Tipo de Cabeçalho
-;	Registradores preservados
 PCI_Get_HeaderType:
+	push 	eax
 	push 	ecx
 	push 	edx
-	
-	mov 	ah, PCI_READ           ; Leitura do PCI
-	mov 	dl, 0x0E               ; Offset 14 -> Tipo De Cabeçalho
-	call 	PCI_Config_Word        ; Efetua a leitura PCI
-	
+
+	mov 	dl, 14                 ; Offset 14 -> Tipo De Cabeçalho
+	call 	PCI_Read_Word          ; Efetua a leitura PCI
 	mov 	word[Header], ax       ; Armazene o retorno em Header
 	
 	pop 	edx
 	pop 	ecx
+	pop 	eax
 ret
 Header 	dw 	0x0000
-
+; -----------------------------------------------------------------------------
 
 
 ;Configuration Mechanism One has two IO port rages associated with it.
