@@ -23,7 +23,7 @@ os_PCIEnabled  db 0
 
 PCIListStr:
 		db "KiddieOS PCI List",13,10,13,10
-		db "BUS   |DEV   |FUNC   |VENDOR   |DEVICE   |CLASS   |DEVICE NAME   ",13,10,0
+		db "BUS     |DEV     |FUNC    |VENDOR  |DEVICE  |CLASS   |DEVICE NAME   ",13,10,0
 
 
 Init_PCI:
@@ -179,27 +179,26 @@ ret
 PCI_Show_Info:
 	push 	ax
 	call 	Print_Dec_Value32
-	call 	OffsetSpaces
+	call 	OffsetSpacesDec
 	mov 	ax, bx
 	call 	Print_Dec_Value32
-	call 	OffsetSpaces
+	call 	OffsetSpacesDec
 	mov 	ax, cx
 	call 	Print_Dec_Value32
-	call 	OffsetSpaces
+	call 	OffsetSpacesDec
 	pop 	ax
 	push 	ax
 	call 	PCI_Get_DeviceID
 	call 	PCI_Get_ClassCode
 	mov 	ax, word[Vendor]
 	call 	Print_Hexa_Value16
-	mov 	ax, 0x0E20
-	int 	0x10
+	call 	OffsetSpacesHex
 	mov 	ax, word[Device]
 	call 	Print_Hexa_Value16
-	mov 	ax, 0x0E20
-	int 	0x10
+	call 	OffsetSpacesHex
 	mov 	ax, word[ClassCode]
 	call 	Print_Hexa_Value16
+	call 	OffsetSpacesHex
 	mov 	ax, 0x0E0A
 	int 	0x10
 	mov 	ax, 0x0E0D
@@ -209,9 +208,9 @@ PCI_Show_Info:
 	pop 	ax
 ret
 
-OffsetSpaces:
+OffsetSpacesDec:
 	pushad
-	mov 	cx, 1
+	mov 	cx, 7
 	mov 	bx, 10
 OffSpace1:
 	xor 	dx, dx
@@ -219,12 +218,28 @@ OffSpace1:
 	cmp 	ax, 0
 	je 	    RetOff	
 IncVar:
-	inc 	cx
+	dec 	cx
 	jmp 	OffSpace1
 RetOff:
 	mov 	ax, 0x0E20
 	int 	0x10
 	loop 	RetOff
+	mov 	ah, 0x0E
+	mov 	al, "|"
+	int 	0x10
+	popad
+ret
+
+OffsetSpacesHex:
+	pushad
+	mov 	cx, 4
+Loop_Off:
+	mov 	ax, 0x0E20
+	int 	0x10
+	loop 	Loop_Off
+	mov 	ah, 0x0E
+	mov 	al, "|"
+	int 	0x10
 	popad
 ret
 
