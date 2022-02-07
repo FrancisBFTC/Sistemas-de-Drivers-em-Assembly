@@ -23,7 +23,7 @@ os_PCIEnabled  db 0
 
 PCIListStr:
 		db "KiddieOS PCI List",13,10,13,10
-		db "BUS     |DEV     |FUNC    |VENDOR  |DEVICE  |CLASS   |DEVICE NAME   ",13,10,0
+		db "BUS     |DEV     |FUNC    |VENDOR  |DEVICE  |CLASSES |DEVICE NAME   ",13,10,0
 
 
 Init_PCI:
@@ -189,14 +189,14 @@ PCI_Show_Info:
 	pop 	ax
 	push 	ax
 	call 	PCI_Get_DeviceID
-	call 	PCI_Get_ClassCode
+	call 	PCI_Get_Classes
 	mov 	ax, word[Vendor]
 	call 	Print_Hexa_Value16
 	call 	OffsetSpacesHex
 	mov 	ax, word[Device]
 	call 	Print_Hexa_Value16
 	call 	OffsetSpacesHex
-	mov 	ax, word[ClassCode]
+	mov 	ax, word[Classes]
 	call 	Print_Hexa_Value16
 	call 	OffsetSpacesHex
 	mov 	ax, 0x0E0A
