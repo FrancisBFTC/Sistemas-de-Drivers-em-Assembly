@@ -1,5 +1,5 @@
 ; ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-;              FUNÇÕES DE COMUNICAÇÃO PCI PARA OS DRIVERS
+;                    DRIVER DE COMUNICAÇÃO PCI
 ;
 ;                     Kernel em Assembly x86
 ;                    Criado por Wender Francis
@@ -20,10 +20,6 @@ offs 	db 0
 pdata 	dd 0
 
 os_PCIEnabled  db 0
-
-PCIListStr:
-		db "KiddieOS PCI List",13,10,13,10
-		db "BUS     |DEV     |FUNC    |VENDOR  |DEVICE  |DEVICE CLASS NAME   ",13,10,0
 
 
 Init_PCI:
@@ -65,6 +61,7 @@ PCI_Read_Word:
 	out 	dx, eax
 	mov 	dx, PCI_DATA
     in 		eax, dx
+	mov 	[PCI_Reg], eax
 	
 	pop 	edx
 	and 	edx, 0x02
@@ -76,6 +73,7 @@ PCI_Read_Word:
     pop 	ecx
 	pop 	ebx
 ret
+PCI_Reg 	dd 0x00000000
 ; -----------------------------------------------------------------------------
 
 
@@ -127,7 +125,7 @@ PCI_Check_Device:
 	je 		DeviceNoExist
 	
 	; EXIBIR INFORMAÇÕES ----------------
-	call 	PCI_Show_Info
+	call 	PCI_Show_Parcial
 	; -----------------------------------
 		
 	call 	PCI_Check_Function
@@ -151,7 +149,7 @@ Multi_Func_Dev:                    ; Se tiver, É um dev multifunção
 		call 	PCI_Check_Function
 		
 		; EXIBIR INFORMAÇÕES ----------------
-		call 	PCI_Show_Info
+		call 	PCI_Show_Parcial
 		; -----------------------------------
 	
 		inc 	cl
@@ -193,12 +191,12 @@ ret
 ; -----------------------------------------------------------------------------
 
 ; -----------------------------------------------------------------------------
-; PCI_Show_Info - Exibe informações do dispositivo PCI
+; PCI_Show_Full - Exibe informações do dispositivo PCI
 ; IN:   AL  = Bus number
 ;		BL  = Device/Slot number
 ; 		CL  = Function
 ; OUT:	None.
-PCI_Show_Info:
+PCI_Show_Full:
 	push 	ax
 	call 	Print_Dec_Value32
 	call 	OffsetSpacesDec
@@ -218,12 +216,34 @@ PCI_Show_Info:
 	mov 	ax, word[Device]
 	call 	Print_Hexa_Value16
 	call 	OffsetSpacesHex
-	;mov 	ax, word[Classes]
-	;call 	Print_Hexa_Value16
-	;call 	OffsetSpacesHex
 	
-; -------------------------------------------------
+	call 	Show_Name_Devices
+	
+	pop 	ax
+ret
+
+PCI_Show_Parcial:
+	push 	ax
+	
+	call 	PCI_Get_DeviceID
+	call 	PCI_Get_Classes
+	call 	PCI_Get_ProgIF
+	mov 	ax, word[Vendor]
+	call 	Print_Hexa_Value16
+	call 	OffsetSpacesHex
+	mov 	ax, word[Device]
+	call 	Print_Hexa_Value16
+	call 	OffsetSpacesHex
+	
+	call 	Show_Name_Devices
+	
+	pop 	ax
+ret
+
+Show_Name_Devices:
 	push 	bx
+	push 	si
+	
 	mov 	si, ADDRCL
 	mov 	bl, byte[ClassCode]
 	shl 	bx, 1
@@ -232,25 +252,52 @@ PCI_Show_Info:
 	
 	cmp 	byte[SubClass], 0x80
 	je 		ShowOther
+	
+	push 	bx
 	mov 	si, SUBVEC
 	mov 	si, word[si + bx]
 	mov 	bl, byte[SubClass]
 	shl 	bx, 1
 	mov 	si, word[si + bx]
+	call 	Print_String
+	pop 	bx
+	
+	mov 	si, PROGCL
+	mov 	si, word[si + bx]   ; SI = SUBPIFx
+	cmp 	si, 0x0000
+	jz 		Ret_Names
+	mov 	bl, byte[SubClass]   
+	shl 	bx, 1
+	mov 	si, word[si + bx]   ; SI = PCISBx
+	cmp 	si, 0x0000
+	jz 		Ret_Names
+	mov 	bl, byte[ProgIF]
+	shl 	bx, 1
+	mov 	si, word[si + bx]   ; SI = PROGIFx.x_x
+	
 	jmp 	ShowDevice
 ShowOther:
 	mov 	si, OTHER
 ShowDevice:
 	call 	Print_String
-	call 	Break_Line
-; -------------------------------------------------
-
-	mov 	ax, 0x00
-	int 	0x16
 	
+	; Acesso das Strings de Interface -----------
+; PROGCL  -> Índice das classes
+; SUBPIFx -> Índice das subclasses
+; PCISBx  -> Índice das Interfaces
+; PROGIFx.x_x -> Endereço da String
+;
+; Acesso das Strings de SubClasses
+; SUBVEC  -> Índice das Classes com vetor de SubClasses
+; PCICLx  -> Índice das SubClasses dentro de uma Classe
+
+Ret_Names:
+	call 	Break_Line
+	
+	pop 	si
 	pop 	bx
-	pop 	ax
 ret
+
 
 OffsetSpacesDec:
 	pushad
@@ -301,7 +348,7 @@ PCI_Check_All_Buses:
 	xor 	ecx, ecx
 	xor 	edx, edx
 	; EXIBIR INFORMAÇÕES ----------------
-	mov 	si, PCIListStr
+	mov 	si, PCIListStr1
 	call 	Print_String
 	; -----------------------------------
 	mov 	al, 0
@@ -659,10 +706,46 @@ ret
 SecondaryBus  	db 	0x00
 PrimaryBus 		db  0x00
 
+; -----------------------------------------------------------------------------
+; PCI_Get_Cardbus - Retorna Ponteiro pra informações do dispositivo
+; IN:   AL  = Bus number
+;		BL  = Device/Slot number
+; 		CL  = Função
+; OUT:	AX  = CardBus CIS Pointer
+PCI_Get_Cardbus:
+	push 	eax
 	
+	mov 	dl, 0x28                   ; Offset 0x28 -> CardBus CIS Pointer 
+	call 	PCI_Read_Word              ; Efetua a leitura PCI
+	mov 	eax, [PCI_Reg]			   ; Pega o valor de 32 bits do ponteiro
+	mov 	[CardPointer], eax         ; Armazene o retorno em CardPointer
 	
+	pop 	eax
+ret
+CardPointer  	dd 	0x00000000
+; -----------------------------------------------------------------------------
+	
+; Acesso das Strings de Interface -----------
+; PROGCL  -> Índice das classes
+; SUBPIFx -> Índice das subclasses
+; PCISBx  -> Índice das Interfaces
+;
+; Acesso das Strings de SubClasses
+; SUBVEC  -> Índice das Classes com vetor de SubClasses
+; PCICLx  -> Índice das SubClasses dentro de uma Classe
+	
+PCIListStr:
+		db "KiddieOS PCI List",13,10,13,10
+		db "BUS     |DEV     |FUNC    |VENDOR  |DEVICE  |DEVICE CLASS NAME   ",13,10,0
+		
+PCIListStr1:
+		db "KiddieOS PCI List",13,10,13,10
+		db "|VENDOR |DEVICE  |DEVICE CLASS NAME   ",13,10,0
+		
+		
 SUBVEC  dw PCICL0, PCICL1, PCICL2, PCICL3, PCICL4, PCICL5, PCICL6, PCICL7, PCICL8
         dw PCICL9, PCICLA, PCICLB, PCICLC, PCICLD, PCICLE, PCICLF, PCICL10, PCICL11
+		
 
 ADDRCL  dw CLASS0,  CLASS1,  CLASS2,  CLASS3,  CLASS4, CLASS5, CLASS6, CLASS7 
         dw CLASS8,  CLASS9,  CLASSA,  CLASSB,  CLASSC, CLASSD, CLASSE, CLASSF
@@ -671,6 +754,17 @@ ADDRCL  dw CLASS0,  CLASS1,  CLASS2,  CLASS3,  CLASS4, CLASS5, CLASS6, CLASS7
 		dw CLASS40
 		TIMES (0xFE - 0x41) dw 0x0000
 		dw CLASSFF	
+		
+SUBPIF1  dw 0,PCISB0,0,0,0,PCISB1,PCISB2,PCISB3,PCISB4,0           ; Para SubClasses da Classe 1
+SUBPIF3  dw PCISB5,0,0,0                                           ; Para SubClasses da Classe 3
+SUBPIF6  dw 0,0,0,0,PCISB6,0,0,0,PCISB7,PCISB8,0,0                 ; Para SubClasses da Classe 6
+SUBPIF7  dw PCISB9,PCISB10,0,PCISB11,0,0,0                         ; Para SubClasses da Classe 7
+SUBPIF8  dw PCISB12,PCISB13,PCISB14,PCISB15,0,0,0,0                ; Para SubClasses da Classe 8
+SUBPIF9  dw 0,0,0,0,PCISB16,0                                      ; Para SubClasses da Classe 9
+SUBPIFC  dw PCISB17,0,0,PCISB18,0,0,0,PCISB19,0,0,0                ; Para SubClasses da Classe 12
+
+PROGCL   dw 0,SUBPIF1,0,SUBPIF3,0,0,SUBPIF6,SUBPIF7,SUBPIF8        ; Acessada por Classes
+         dw SUBPIF9,0,0,SUBPIFC,0,0,0,0,0,0                                          
 	
 PCI_Names:
 CLASS0: db "Unclassified: ",0
@@ -684,14 +778,55 @@ CLASS1: db  "Mass Storage: ",0
 	
 	SBCLASS1_0  db "SCSI Bus Controller ",0	
 	SBCLASS1_1  db "IDE Controller",0
+		
+		PROGIF1.1_0   db " [ISA Compatibility mode-only controller]",0
+		PROGIF1.1_5   db " [PCI native mode-only controller]",0
+		PROGIF1.1_A   db " [ISA Compatibility mode controller, channels to PCI native mode]",0
+		PROGIF1.1_F   db " [PCI native mode controller, channels to ISA compatibility mode]",0
+		PROGIF1.1_80  db " [ISA Compatibility mode-only controller, bus mastering]",0
+		PROGIF1.1_85  db " [PCI native mode-only controller, bus mastering]",0
+		PROGIF1.1_8A  db " [ISA Compatibility mode controller, channels to PCI native mode, bus mastering]",0
+		PROGIF1.1_8F  db " [PCI native mode controller, channels to ISA compatibility mode, bus mastering]",0
+		
+		PCISB0  dw PROGIF1.1_0,0,0,0,0,PROGIF1.1_5,0,0,0,0,PROGIF1.1_A,0,0,0,0,PROGIF1.1_F
+				TIMES (0x80 - 0xF - 1) dw 0x0000
+				dw PROGIF1.1_80,0,0,0,0,PROGIF1.1_85,0,0,0,0,PROGIF1.1_8A,0,0,0,0,PROGIF1.1_8F
+				
 	SBCLASS1_2  db "Floppy Disk Controller",0
 	SBCLASS1_3  db "IPI Bus Controller",0
 	SBCLASS1_4  db "RAID Controller",0
 	SBCLASS1_5  db "ATA Controller",0
+		
+		PROGIF1.5_20  db " [Single DMA]",0
+		PROGIF1.5_30  db " [Chained DMA]",0
+		
+		PCISB1: TIMES (0x20 - 1) dw 0x0000
+				dw PROGIF1.5_20
+				TIMES (0x10 - 1) dw 0x0000
+				dw PROGIF1.5_30
+		
 	SBCLASS1_6  db "Serial ATA Controller",0
+		
+		PROGIF1.6_0 db " [Vendor Specific Interface]",0
+		PROGIF1.6_1 db " [AHCI 1.0]",0
+		PROGIF1.6_2 db " [Serial Storage Bus]",0
+		
+		PCISB2  dw PROGIF1.6_0,PROGIF1.6_1,PROGIF1.6_2
+		
 	SBCLASS1_7  db "Serial Attached SCSI Controller",0
+	
+		PROGIF1.7_0 db " [SAS]",0
+		PROGIF1.7_1 db " [Serial Storage Bus]",0
+		
+		PCISB3  dw PROGIF1.7_0,PROGIF1.7_1
+		
 	SBCLASS1_8  db "Non-Volatile Memory Controller ",0
 	
+		PROGIF1.8_1 db " [NVMHCI]",0
+		PROGIF1.8_2 db " [NVM Express]",0
+		
+		PCISB4  dw 0,PROGIF1.8_1,PROGIF1.8_2
+		
 	PCICL1 	dw SBCLASS1_0,SBCLASS1_1,SBCLASS1_2,SBCLASS1_3,SBCLASS1_4,SBCLASS1_5,SBCLASS1_6,SBCLASS1_7,SBCLASS1_8
 	
 CLASS2: db "Network: ",0
@@ -711,6 +846,12 @@ CLASS2: db "Network: ",0
 CLASS3: db "Display: ",0
 
 	SBCLASS3_0  db "VGA Compatible Controller",0
+		
+		PROGIF3.0_0  db " [VGA Controller]",0
+		PROGIF3.0_1  db " [8514-Compatible Controller]",0
+		
+		PCISB5  dw PROGIF3.0_0,PROGIF3.0_1
+		
 	SBCLASS3_1  db "XGA Controller",0
 	SBCLASS3_2  db "3D Controller (Not VGA-Compatible)",0
 	
@@ -739,11 +880,32 @@ CLASS6: db "Bridge: ",0
 	SBCLASS6_2  db "EISA Bridge",0
 	SBCLASS6_3  db "MCA Bridge",0
 	SBCLASS6_4  db "PCI-to-PCI Bridge",0
+		
+		PROGIF6.4_0  db " [Normal Decode]",0 
+		PROGIF6.4_1  db " [Subtractive Decode]",0 
+		
+		PCISB6  dw PROGIF6.4_0,PROGIF6.4_1
+		
 	SBCLASS6_5  db "PCMCIA Bridge",0
 	SBCLASS6_6  db "NuBus Bridge",0
 	SBCLASS6_7  db "CardBus Bridge",0
 	SBCLASS6_8  db "RACEway Bridge",0
+		
+		PROGIF6.8_0  db " [Transparent Mode]",0
+		PROGIF6.8_1  db " [Endpoint Mode]",0
+		
+		PCISB7  dw PROGIF6.8_0,PROGIF6.8_1
+		
 	SBCLASS6_9  db "PCI-to-PCI Bridge",0
+	
+		PROGIF6.9_40  db " [Semi-Transparent, Primary bus towards host CPU]",0
+		PROGIF6.9_80  db " [Semi-Transparent, Secondary bus towards host CPU]",0
+		
+		PCISB8: TIMES (0x40 - 1) dw 0x0000
+				dw PROGIF6.9_40
+				TIMES (0x40 - 1) dw 0x0000
+				dw PROGIF6.9_80
+		
 	SBCLASS6_A  db "InfiniBand-to-PCI Host Bridge",0
 	
 	PCICL6 	dw SBCLASS6_0,SBCLASS6_1,SBCLASS6_2,SBCLASS6_3,SBCLASS6_4,SBCLASS6_5,SBCLASS6_6,SBCLASS6_7,SBCLASS6_8,SBCLASS6_9,SBCLASS6_A
@@ -751,9 +913,41 @@ CLASS6: db "Bridge: ",0
 CLASS7: db "Simple Communication: ",0
 
 	SBCLASS7_0  db "Serial Controller",0
+	
+		PROGIF7.0_0  db " [8250-Compatible (Generic XT)]",0
+		PROGIF7.0_1  db " [16450-Compatible]",0
+		PROGIF7.0_2  db " [16550-Compatible]",0
+		PROGIF7.0_3  db " [16650-Compatible]",0
+		PROGIF7.0_4  db " [16750-Compatible]",0
+		PROGIF7.0_5  db " [16850-Compatible]",0
+		PROGIF7.0_6  db " [16950-Compatible]",0
+		
+		PCISB9  dw PROGIF7.0_0,PROGIF7.0_1,PROGIF7.0_2,PROGIF7.0_3,PROGIF7.0_4,PROGIF7.0_5,PROGIF7.0_6
+		
 	SBCLASS7_1  db "Parallel Controller",0
+	
+		PROGIF7.1_0   db " [Standard Parallel Port]",0
+		PROGIF7.1_1   db " [Bi-Directional Parallel Port]",0
+		PROGIF7.1_2   db " [ECP 1.X Compliant Parallel Port]",0
+		PROGIF7.1_3   db " [IEEE 1284 Controller]",0
+		PROGIF7.1_FE  db " [IEEE 1284 Target Device]",0
+		
+		PCISB10  dw PROGIF7.1_0,PROGIF7.1_1,PROGIF7.1_2,PROGIF7.1_3
+				 TIMES (0xFE - 0x4 - 1) dw 0x0000
+				 dw PROGIF7.1_FE
+		
 	SBCLASS7_2  db "Multiport Serial Controller",0
 	SBCLASS7_3  db "Modem",0
+	
+	    PROGIF7.3_0  db " [Generic Modem]",0
+	    PROGIF7.3_1  db " [Hayes 16450-Compatible Interface]",0
+	    PROGIF7.3_2  db " [Hayes 16550-Compatible Interface]",0
+	    PROGIF7.3_3  db " [Hayes 16650-Compatible Interface]",0
+	    PROGIF7.3_4  db " [Hayes 16750-Compatible Interface]",0
+		
+		PCISB11  dw PROGIF7.3_0,PROGIF7.3_1,PROGIF7.3_2,PROGIF7.3_3,PROGIF7.3_4
+		
+		
 	SBCLASS7_4  db "IEEE 488.1/2 (GPIB) Controller",0
 	SBCLASS7_5  db "Smart Card Controller",0
 	
@@ -762,9 +956,42 @@ CLASS7: db "Simple Communication: ",0
 CLASS8: db "Base System Peripheral: ",0
 
 	SBCLASS8_0  db "PIC",0
+		
+		PROGIF8.0_0   db " [Generic 8259-Compatible]",0
+		PROGIF8.0_1   db " [ISA-Compatible]",0
+		PROGIF8.0_2   db " [EISA-Compatible]",0
+		PROGIF8.0_10  db " [I/O APIC Interrupt Controller]",0
+		PROGIF8.0_20  db " [I/O(x) APIC Interrupt Controller]",0
+		
+		PCISB12  dw PROGIF8.0_0,PROGIF8.0_1,PROGIF8.0_2,0,0,0,0,0,0,0,0,0,0,0,0,0
+		dw PROGIF8.0_10
+		TIMES (0x10 - 1) dw 0x0000
+		dw PROGIF8.0_20
+		
 	SBCLASS8_1  db "DMA Controller",0
+	
+		PROGIF8.1_0   db " [Generic 8237-Compatible]",0
+		PROGIF8.1_1   db " [ISA-Compatible]",0
+		PROGIF8.1_2   db " [EISA-Compatible]",0
+		
+		PCISB13  dw PROGIF8.1_0,PROGIF8.1_1,PROGIF8.1_2
+		
 	SBCLASS8_2  db "Timer",0
+	
+		PROGIF8.2_0   db " [Generic 8254-Compatible]",0
+		PROGIF8.2_1   db " [ISA-Compatible]",0
+		PROGIF8.2_2   db " [EISA-Compatible]",0
+		PROGIF8.2_3   db " [HPET]",0
+		
+		PCISB14  dw PROGIF8.2_0,PROGIF8.2_1,PROGIF8.2_2,PROGIF8.2_3
+		
 	SBCLASS8_3  db "RTC Controller",0
+		
+		PROGIF8.3_0   db " [Generic RTC]",0
+		PROGIF8.3_1   db " [ISA-Compatible]",0
+		
+		PCISB15  dw PROGIF8.3_0,PROGIF8.3_1
+		
 	SBCLASS8_4  db "PCI Hot-Plug Controller",0
 	SBCLASS8_5  db "SD Host controller",0
 	SBCLASS8_6  db "IOMMU",0
@@ -778,7 +1005,12 @@ CLASS9: db "Input Device: ",0
 	SBCLASS9_2  db "Mouse Controller",0
 	SBCLASS9_3  db "Scanner Controller",0
 	SBCLASS9_4  db "Gameport Controller",0
+		
+		PROGIF9.4_0    db " [Generic]",0
+		PROGIF9.4_10   db " [Extended]",0
 	
+		PCISB16  dw PROGIF9.4_0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,PROGIF9.4_10
+		
 	PCICL9 	dw SBCLASS9_0,SBCLASS9_1,SBCLASS9_2,SBCLASS9_3,SBCLASS9_4
 	
 CLASSA: db "Docking Station: ",0
@@ -804,13 +1036,42 @@ CLASSB: db "Processor: ",0
 CLASSC: db "Serial Bus: ",0
 
 	SBCLASSC_0  db "FireWire (IEEE 1394) Controller",0
+	
+		PROGIFC.0_0    db " [Generic]",0
+		PROGIFC.0_10   db " [OHCI]",0
+		
+		PCISB17  dw PROGIFC.0_0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,PROGIFC.0_10
+		
 	SBCLASSC_1  db "ACCESS Bus Controller",0
 	SBCLASSC_2  db "SSA",0
 	SBCLASSC_3  db "USB Controller",0
+	
+		PROGIFC.3_0     db " [USB1.1: UHCI Controller]",0
+		PROGIFC.3_10    db " [USB1.1: OHCI Controller]",0
+		PROGIFC.3_20    db " [USB2.0: EHCI Controller]",0
+		PROGIFC.3_30    db " [USB3.0: XHCI Controller]",0
+		PROGIFC.3_80    db " [Unspecified]",0
+		PROGIFC.3_FE    db " [USB Device (Not a host controller)]",0
+		
+		PCISB18  dw PROGIFC.3_0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,PROGIFC.3_10,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,PROGIFC.3_20
+		         dw 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,PROGIFC.3_30
+		         TIMES (0x80 - 0x30 - 1) dw 0
+				 dw PROGIFC.3_80
+				 TIMES (0xFE - 0x80 - 1) dw 0
+				 dw PROGIFC.3_FE
+				 
+		
 	SBCLASSC_4  db "Fibre Channel",0
 	SBCLASSC_5  db "SMBus Controller",0
 	SBCLASSC_6  db "InfiniBand Controller",0
 	SBCLASSC_7  db "IPMI Interface",0
+	
+		PROGIFC.7_0  db " [SMIC]",0
+		PROGIFC.7_1  db " [Keyboard Controller Style]",0
+		PROGIFC.7_2  db " [Block Transfer]",0
+		
+		PCISB19  dw PROGIFC.7_0,PROGIFC.7_1,PROGIFC.7_2
+		
 	SBCLASSC_8  db "SERCOS Interface (IEC 61491)",0
 	SBCLASSC_9  db "CANbus Controller",0
 	
