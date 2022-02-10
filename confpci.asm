@@ -13,6 +13,93 @@ PCI_DATA		EQU	0x0CFC
 PCI_READ 		EQU 0x00
 PCI_WRITE 		EQU 0x01
 
+
+HeaderMain:  ; Main Header for all Devices, Size=16 bytes + 4
+	.VendorID    dw 0
+	.DeviceID    dw 0
+	.Command     dw 0
+	.Status      dw 0
+	.RevisionID  db 0
+	.ProgIF      db 0
+	.SubClass    db 0
+	.ClassCode   db 0
+	.CacheLSize  db 0
+	.LatTimer    db 0
+	.HeadType    db 0
+	.Bist        db 0
+	.HeadAddress dd 0
+	
+HeaderType0:  ; (Common Header), size=48 bytes
+	.BaseBAR0   dd 0
+	.BaseBAR1   dd 0
+	.BaseBAR2   dd 0
+	.BaseBAR3   dd 0
+	.BaseBAR4   dd 0
+	.BaseBAR5   dd 0
+	.CardBusCS  dd 0
+	.SubSysVID  dw 0
+	.SubSysID   dw 0
+	.ExpROM     dd 0
+	.CapPointer db 0
+	.Reserved0  dw 0
+	.Reserved1  db 0
+	.Reserved2  dd 0
+	.IntLine    db 0
+	.IntPIN     db 0
+	.MinGrant   db 0
+	.MaxLatency db 0
+
+HeaderType1:   ;  (PCI-to-PCI Bridge Header), Size=48 bytes
+	.BaseBAR0       dd 0
+	.BaseBAR1       dd 0
+	.PrimaryBus     db 0
+	.SecondaryBus   db 0
+	.SubordinaryBus db 0
+	.SecondLatency  db 0
+	.IOBase         db 0
+	.IOLimit        db 0
+	.SecondStatus   dw 0
+	.MemoryBase     dw 0
+	.MemoryLimit    dw 0
+    .PrefMemBase    dw 0
+	.PrefMemLimit   dw 0
+	.PrefMemBase32  dd 0
+	.PrefMemLimit32 dd 0
+	.IOBase16       dw 0
+	.IOLimit16      dw 0
+	.CapPointer     db 0
+	.Reserved0      dw 0
+	.Reserved1      db 0
+	.ExpROMAddr     dd 0
+	.IntLine        db 0
+	.IntPIN         db 0
+	.BridgeControl  dw 0
+	
+HeaderType2:  ; (PCI-to-CardBus Bridge Header), size=56 bytes
+	.CardBusSocket   dd 0
+	.OffsetCapList   db 0
+	.Reserved        db 0
+	.SecondaryStatus dw 0
+	.PCIBusNumber    db 0
+	.CardBusNumber   db 0
+	.SubordBusNumber db 0
+	.CardBusLatTimer db 0
+	.MemoryBase0     dd 0
+	.MemoryLimit0    dd 0
+	.MemoryBase1     dd 0
+	.MemoryLimit1    dd 0
+	.IOBase0         dd 0
+	.IOLimit0        dd 0
+	.IOBase1         dd 0
+	.IOLimit1        dd 0
+	.InterruptLine   db 0
+	.InterruptPIN    db 0
+	.BridgeControl   dw 0
+	.SubSysDeviceID  dw 0
+	.SubSysVendorID  dw 0
+	.CardLegacy16    dd 0
+	
+
 bus 	db 0
 slot 	db 0
 func 	db 0
@@ -20,6 +107,8 @@ offs 	db 0
 pdata 	dd 0
 
 os_PCIEnabled  db 0
+
+
 
 
 Init_PCI:
@@ -64,12 +153,14 @@ PCI_Read_Word:
 	mov 	[PCI_Reg], eax
 	
 	pop 	edx
+	push 	edx
 	and 	edx, 0x02
 	shl 	edx, 3          ; multiplique por 8
 	mov 	ecx, edx
 	shr 	eax, cl
 	and 	eax, 0xFFFF
 	
+	pop 	edx
     pop 	ecx
 	pop 	ebx
 ret
@@ -122,10 +213,10 @@ PCI_Check_Device:
 	mov 	cl, 0          ; Função 0
 	call 	PCI_Get_VendorID
 	cmp 	word[Vendor], 0xFFFF
-	je 		DeviceNoExist
+	je 		ReturnDevice
 	
 	; EXIBIR INFORMAÇÕES ----------------
-	call 	PCI_Show_Parcial
+	call 	PCI_Show_Full
 	; -----------------------------------
 		
 	call 	PCI_Check_Function
@@ -149,16 +240,13 @@ Multi_Func_Dev:                    ; Se tiver, É um dev multifunção
 		call 	PCI_Check_Function
 		
 		; EXIBIR INFORMAÇÕES ----------------
-		call 	PCI_Show_Parcial
+		call 	PCI_Show_Full
 		; -----------------------------------
 	
 		inc 	cl
 		jmp 	Loop_Check_Functions
 	
-DeviceNoExist:
-	;stc
-	;mov 	si, MsgNoDev
-	;call 	Print_String
+
 ReturnDevice:
 	popad
 ret
@@ -249,10 +337,8 @@ Show_Name_Devices:
 	shl 	bx, 1
 	mov 	si, word[si + bx]
 	call 	Print_String
-	
 	cmp 	byte[SubClass], 0x80
 	je 		ShowOther
-	
 	push 	bx
 	mov 	si, SUBVEC
 	mov 	si, word[si + bx]
@@ -261,7 +347,6 @@ Show_Name_Devices:
 	mov 	si, word[si + bx]
 	call 	Print_String
 	pop 	bx
-	
 	mov 	si, PROGCL
 	mov 	si, word[si + bx]   ; SI = SUBPIFx
 	cmp 	si, 0x0000
@@ -348,7 +433,7 @@ PCI_Check_All_Buses:
 	xor 	ecx, ecx
 	xor 	edx, edx
 	; EXIBIR INFORMAÇÕES ----------------
-	mov 	si, PCIListStr1
+	mov 	si, PCIListStr
 	call 	Print_String
 	; -----------------------------------
 	mov 	al, 0
@@ -723,6 +808,260 @@ PCI_Get_Cardbus:
 	pop 	eax
 ret
 CardPointer  	dd 	0x00000000
+; -----------------------------------------------------------------------------
+
+
+; -----------------------------------------------------------------------------
+; PCI_Get_Info - Retorna Todas as informações dos dispositivos
+; IN:   AL  = Bus number
+;		BL  = Device/Slot number
+; 		CL  = Função
+; OUT:	ESI  = Ponteiro para estrutura Header do dispositivo
+PCI_Get_Info:
+	pushad
+	
+	mov 	[bus], al
+	mov 	[slot], bl
+	mov 	[func], cl
+	mov 	edi, HeaderMain
+	xor 	edx, edx
+	mov 	ecx, 4
+	Get_Header1:
+		push 	cx
+		push 	bx
+		mov 	bl, [slot]
+		mov 	cl, [func]
+		call 	PCI_Read_Word
+		mov 	ebx, edx
+		mov 	WORD [edi + ebx], ax
+		pop 	cx
+		pop 	bx
+		mov 	al, [bus]
+		add 	dl, 2
+		loop 	Get_Header1
+	mov 	ecx, 4
+	Get_Header2:
+		push 	cx
+		push 	bx
+		mov 	bl, [slot]
+		mov 	cl, [func]
+		call 	PCI_Read_Word
+		mov 	ebx, edx
+		mov 	BYTE [edi + ebx], al
+		mov 	BYTE [edi + ebx + 1], ah
+		pop 	bx
+		pop 	cx
+		mov 	al, [bus]
+		add 	dl, 2
+		loop 	Get_Header2
+	
+	cmp 	WORD[HeaderMain.VendorID], 0xFFFF
+	je 		DeviceNoExist
+		
+	mov 	al, BYTE [HeaderMain.HeadType]
+	and 	al, 0x03
+	cmp 	al, 0x00
+	je 		Get_Info1
+	cmp 	al, 0x01
+	je 		Get_Info2
+	cmp 	al, 0x02
+	je 		Get_Info3
+	jmp 	DeviceNoExist
+
+Get_Info1:
+	mov 	edi, HeaderType0
+	mov 	DWORD [HeaderMain.HeadAddress], edi
+	mov 	ecx, 7
+	mov 	edx, 0x10
+	loop_get_info1:
+		push 	cx
+		push 	bx
+		mov 	al, [bus]
+		mov 	bl, [slot]
+		mov 	cl, [func]
+		call 	PCI_Read_Word
+		mov 	eax, DWORD [PCI_Reg]
+		mov 	ebx, edx
+		sub 	ebx, 0x10
+		mov 	DWORD [edi + ebx], eax
+		pop 	bx
+		pop 	cx
+		add 	dl, 4
+		loop 	loop_get_info1
+		mov 	al, [bus]
+		mov 	bl, [slot]
+		mov 	cl, [func]
+		call 	PCI_Read_Word
+		mov 	eax, DWORD [PCI_Reg]
+		mov 	ebx, edx
+		sub 	ebx, 0x10
+		mov 	WORD [edi + ebx], ax
+		shl 	eax, 16
+		add 	ebx, 2
+		mov 	WORD [edi + ebx], ax
+		mov 	al, [bus]
+		mov 	bl, [slot]
+		mov 	cl, [func]
+		add 	dl, 4
+		call 	PCI_Read_Word
+		mov 	eax, DWORD [PCI_Reg]
+		mov 	ebx, edx
+		sub 	ebx, 0x10
+		mov 	DWORD [edi + ebx], eax
+		mov 	al, [bus]
+		mov 	bl, [slot]
+		mov 	cl, [func]
+		add 	dl, 4
+		call 	PCI_Read_Word
+		mov 	ebx, edx
+		sub 	ebx, 0x10
+		mov 	BYTE [edi + ebx], al
+		add 	dl, 8
+		mov 	ecx, 2
+	loop_get_info1.1:
+		push 	cx
+		push 	bx
+		mov 	al, [bus]
+		mov 	bl, [slot]
+		mov 	cl, [func]
+		call 	PCI_Read_Word
+		mov 	ebx, edx
+		sub 	ebx, 0x10
+		mov 	BYTE [edi + ebx], al
+		mov 	BYTE [edi + ebx + 1], ah
+		pop 	bx
+		pop 	cx
+		add 	dl, 2
+		loop 	loop_get_info1.1
+		jmp 	RetGetInfo
+
+Get_Info2:
+	mov 	edi, HeaderType1
+	mov 	DWORD [HeaderMain.HeadAddress], edi
+	mov 	ecx, 2
+	mov 	edx, 0x10
+	loop_get_info2:
+		push 	cx
+		push 	bx
+		mov 	al, [bus]
+		mov 	bl, [slot]
+		mov 	cl, [func]
+		call 	PCI_Read_Word
+		mov 	eax, DWORD [PCI_Reg]
+		mov 	ebx, edx
+		sub 	ebx, 0x10
+		mov 	DWORD [edi + ebx], eax
+		pop 	bx
+		pop 	cx
+		add 	dl, 4
+		loop 	loop_get_info2
+		mov 	ecx, 3
+	loop_get_info2.1:
+		push 	cx
+		push 	bx
+		mov 	al, [bus]
+		mov 	bl, [slot]
+		mov 	cl, [func]
+		call 	PCI_Read_Word
+		mov 	ebx, edx
+		sub 	ebx, 0x10
+		mov 	BYTE [edi + ebx], al
+		mov 	BYTE [edi + ebx + 1], ah
+		pop 	bx
+		pop 	cx
+		add 	dl, 2
+		loop 	loop_get_info2.1
+		mov 	ecx, 5
+	loop_get_info2.2:
+		push 	cx
+		push 	bx
+		mov 	al, [bus]
+		mov 	bl, [slot]
+		mov 	cl, [func]
+		call 	PCI_Read_Word
+		mov 	ebx, edx
+		sub 	ebx, 0x10
+		mov 	WORD [edi + ebx], ax
+		pop 	bx
+		pop 	cx
+		add 	dl, 2
+		loop 	loop_get_info2.2
+		mov 	ecx, 2
+	loop_get_info2.3:
+		push 	cx
+		push 	bx
+		mov 	al, [bus]
+		mov 	bl, [slot]
+		mov 	cl, [func]
+		call 	PCI_Read_Word
+		mov 	eax, DWORD [PCI_Reg]
+		mov 	ebx, edx
+		sub 	ebx, 0x10
+		mov 	DWORD [edi + ebx], eax
+		pop 	bx
+		pop 	cx
+		add 	dl, 4
+		loop 	loop_get_info2.3
+		mov 	ecx, 2
+	loop_get_info2.4:
+		push 	cx
+		push 	bx
+		mov 	al, [bus]
+		mov 	bl, [slot]
+		mov 	cl, [func]
+		call 	PCI_Read_Word
+		mov 	ebx, edx
+		sub 	ebx, 0x10
+		mov 	WORD [edi + ebx], ax
+		pop 	bx
+		pop 	cx
+		add 	dl, 2
+		loop 	loop_get_info2.4
+		mov 	al, [bus]
+		mov 	bl, [slot]
+		mov 	cl, [func]
+		call 	PCI_Read_Word
+		mov 	ebx, edx
+		sub 	ebx, 0x10
+		mov 	BYTE [edi + ebx], al
+		add 	dl, 4
+		mov 	al, [bus]
+		mov 	bl, [slot]
+		call 	PCI_Read_Word
+		mov 	eax, DWORD [PCI_Reg]
+		mov 	ebx, edx
+		sub 	ebx, 0x10
+		mov 	DWORD [edi + ebx], eax
+		add 	dl, 4
+		mov 	al, [bus]
+		mov 	bl, [slot]
+		call 	PCI_Read_Word
+		mov 	ebx, edx
+		sub 	ebx, 0x10
+		mov 	BYTE [edi + ebx], al
+		mov 	BYTE [edi + ebx + 1], ah
+		add 	dl, 2
+		mov 	al, [bus]
+		mov 	bl, [slot]
+		call 	PCI_Read_Word
+		mov 	ebx, edx
+		sub 	ebx, 0x10
+		mov 	WORD [edi + ebx], ax
+		jmp 	RetGetInfo
+Get_Info3:
+	; TODO get Header Type 0x2 Informations
+
+DeviceNoExist:
+	stc
+	mov 	si, MsgNoDevice
+	call 	Print_String
+RetGetInfo:
+	popad
+	mov 	esi, DWORD [HeaderMain.HeadAddress]
+ret
+
+MsgNoDevice  db "This PCI Device don´t Exist!",0
+
 ; -----------------------------------------------------------------------------
 	
 ; Acesso das Strings de Interface -----------
