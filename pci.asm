@@ -8,6 +8,14 @@
 %INCLUDE 	"Hardware/memory.lib"
 %INCLUDE 	"Hardware/kernel.lib"
 
+;[BITS 32]
+;[ORG PCI]
+
+ORG   0
+ALIGN 4
+BITS 32
+SECTION protectedmode vstart=0x150000, valign=4
+
 %IFNDEF		__CONFPCI_ASM__
 %DEFINE 	__CONFPCI_ASM__
 
@@ -15,6 +23,9 @@ PCI_ADDRESS		EQU	0x0CF8
 PCI_DATA		EQU	0x0CFC
 PCI_READ 		EQU 0x00
 PCI_WRITE 		EQU 0x01
+
+jmp 	Init_PCI
+jmp 	Get_Device_Name
 
 
 HeaderMain:  ; Main Header for all Devices, Size=16 bytes + 4
@@ -413,7 +424,7 @@ Return_Name_Device:
 ret
 
 ; -----------------------------------------------------------------------------
-; PCI_Show_Full - Pega o nome do dispositivo baseado no ID
+; Get_Device_Name - Pega o nome do dispositivo baseado no ID
 ; IN:   AL  = Bus number
 ;		BL  = Device/Slot number
 ; 		CL  = Function
