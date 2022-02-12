@@ -109,7 +109,7 @@ func 	db 0
 offs 	db 0
 pdata 	dd 0
 
-os_PCIEnabled  db 0
+PCIEnabled  db 0
 
 
 
@@ -123,7 +123,8 @@ Init_PCI:
 	xor 	edx, edx
 	cmp 	eax, ebx
 	sete 	dl				; Set byte if equal, otherwise clear
-	mov 	byte [os_PCIEnabled], dl
+	mov 	byte [PCIEnabled], dl
+	call 	PCI_Check_All_Buses
 ret
 
 
@@ -139,6 +140,10 @@ PCI_Read_Word:
 	push 	ebx
 	push 	ecx
 	push 	edx
+	
+	and 	eax, 0xFF
+	and 	ebx, 0xFF
+	and 	ecx, 0xFF
 	
 	shl 	eax, 16
 	shl 	ebx, 11
@@ -218,9 +223,16 @@ PCI_Check_Device:
 	cmp 	word[Vendor], 0xFFFF
 	je 		ReturnDevice
 	
+	cmp 	byte[PCIEnabled], 0
+	jz 		Check_Mult_Func1
+	
 	; EXIBIR INFORMAÇÕES ----------------
-	call 	PCI_Show_Parcial
+	;call 	PCI_Show_Full
+	call 	Show_Name_Devices
+	;call 	PCI_Get_Info
 	; -----------------------------------
+	
+Check_Mult_Func1:
 		
 	call 	PCI_Check_Function
 	call 	PCI_Get_HeaderType
@@ -240,12 +252,19 @@ Multi_Func_Dev:                    ; Se tiver, É um dev multifunção
 		inc 	cl
 		jmp 	Loop_Check_Functions
 	CheckFunction:
-		call 	PCI_Check_Function
-		
+	
+		cmp 	byte[PCIEnabled], 0
+		jz 		Check_Mult_Func2
+	
 		; EXIBIR INFORMAÇÕES ----------------
-		call 	PCI_Show_Parcial
+		;call 	PCI_Show_Full
+		call 	Show_Name_Devices
+		;call 	PCI_Get_Info
 		; -----------------------------------
 	
+Check_Mult_Func2:
+		call 	PCI_Check_Function
+		
 		inc 	cl
 		jmp 	Loop_Check_Functions
 	
@@ -289,6 +308,7 @@ ret
 ; OUT:	None.
 PCI_Show_Full:
 	push 	ax
+	
 	call 	Print_Dec_Value32
 	call 	OffsetSpacesDec
 	mov 	ax, bx
@@ -299,6 +319,7 @@ PCI_Show_Full:
 	call 	OffsetSpacesDec
 	pop 	ax
 	push 	ax
+	call 	PCI_Get_VendorID
 	call 	PCI_Get_DeviceID
 	call 	PCI_Get_Classes
 	mov 	ax, word[Vendor]
@@ -307,33 +328,32 @@ PCI_Show_Full:
 	mov 	ax, word[Device]
 	call 	Print_Hexa_Value16
 	call 	OffsetSpacesHex
+
+	pop 	ax
 	
 	call 	Show_Name_Devices
-	
-	pop 	ax
+
 ret
 
-PCI_Show_Parcial:
-	push 	ax
-	
-	call 	PCI_Get_DeviceID
-	call 	PCI_Get_Classes
-	call 	PCI_Get_ProgIF
-	mov 	ax, word[Vendor]
-	call 	Print_Hexa_Value16
-	call 	OffsetSpacesHex
-	mov 	ax, word[Device]
-	call 	Print_Hexa_Value16
-	call 	OffsetSpacesHex
-	
-	call 	Show_Name_Devices
-	
-	pop 	ax
-ret
-
+; -----------------------------------------------------------------------------
+; PCI_Show_Full - Exibe Nomes de dispositivos na inicialização
+; IN:   AL  = Bus number
+;		BL  = Device/Slot number
+; 		CL  = Function
+; OUT:	None.
 Show_Name_Devices:
 	push 	bx
 	push 	si
+	
+	mov 	[bus], al
+	mov 	[slot], bl
+	mov 	[func], cl
+	
+	call 	PCI_Get_Classes
+	call 	PCI_Get_ProgIF
+	
+	mov 	si, StrPCI
+	call 	Print_String
 	
 	mov 	si, ADDRCL
 	mov 	bl, byte[ClassCode]
@@ -363,12 +383,70 @@ Show_Name_Devices:
 	shl 	bx, 1
 	mov 	si, word[si + bx]   ; SI = PROGIFx.x_x
 	
-	jmp 	ShowDevice
+	call 	Print_String
+	jmp 	Return_Name_Device
 ShowOther:
 	mov 	si, OTHER
-ShowDevice:
+	call 	Print_String
+Ret_Names:
+	mov 	al, [bus]
+	mov 	bl, [slot]
+	mov 	cl, [func]
+	call 	Get_Device_Name
+	jc 		Return_Name_Device
+
 	call 	Print_String
 	
+Return_Name_Device:
+	mov 	si, PCIChecked
+	call 	Print_String
+	
+	call 	Break_Line
+	
+	;push 	ax
+	;xor 	ax, ax
+	;int 	0x16
+	;pop 	ax
+	
+	pop 	si
+	pop 	bx
+ret
+
+; -----------------------------------------------------------------------------
+; PCI_Show_Full - Pega o nome do dispositivo baseado no ID
+; IN:   AL  = Bus number
+;		BL  = Device/Slot number
+; 		CL  = Function
+; OUT:	ESI = Endereço da String do Dispositivo.
+Get_Device_Name:
+	pushad
+	call 	PCI_Get_VendorID
+	mov 	eax, DWORD [PCI_Reg]
+	mov 	esi, DevIDs
+	xor 	ebx, ebx
+	xor 	cx, cx
+	mov 	cx, WORD [SizeDevID]
+	shr 	cx, 2
+Loop_DevID:
+	cmp 	DWORD [esi], eax
+	je 		Get_NameDev
+	add 	esi, 4
+	inc 	ebx
+	loop 	Loop_DevID
+	stc
+	jmp 	Ret_GetDev
+Get_NameDev:
+	shl 	ebx, 1
+	mov 	esi, Array_DevID
+	mov 	si, WORD [esi + ebx]
+	mov 	DWORD [AddrStr], esi
+Ret_GetDev:
+	popad
+	mov 	esi, DWORD [AddrStr]
+ret
+AddrStr dd 0
+; -----------------------------------------------------------------------------
+
 	; Acesso das Strings de Interface -----------
 ; PROGCL  -> Índice das classes
 ; SUBPIFx -> Índice das subclasses
@@ -378,14 +456,6 @@ ShowDevice:
 ; Acesso das Strings de SubClasses
 ; SUBVEC  -> Índice das Classes com vetor de SubClasses
 ; PCICLx  -> Índice das SubClasses dentro de uma Classe
-
-Ret_Names:
-	call 	Break_Line
-	
-	pop 	si
-	pop 	bx
-ret
-
 
 OffsetSpacesDec:
 	pushad
@@ -436,12 +506,12 @@ PCI_Check_All_Buses:
 	xor 	ecx, ecx
 	xor 	edx, edx
 	; EXIBIR INFORMAÇÕES ----------------
-	mov 	si, PCIListStr1
-	call 	Print_String
+	;mov 	si, PCIListStr
+	;call 	Print_String
 	; -----------------------------------
 	mov 	al, 0
 	loop_all_buses1:
-		cmp 	al, 255        ; Ler os primeiros 4 barramentos
+		cmp 	al, 255
 		jb  	init_loop_bus
 		jmp 	return_checkb
 		
@@ -477,8 +547,8 @@ PCI_Check_Mult_Buses:
 	xor 	edx, edx
 	
 	; EXIBIR INFORMAÇÕES ----------------
-	mov 	si, PCIListStr
-	call 	Print_String
+	;mov 	si, PCIListStr
+	;call 	Print_String
 	; -----------------------------------
 	
 	call 	PCI_Get_HeaderType
@@ -823,24 +893,41 @@ CardPointer  	dd 	0x00000000
 PCI_Get_Info:
 	pushad
 	
+	mov 	[bus], al
+	mov 	[slot], bl
+	mov 	[func], cl
 	mov 	edi, HeaderMain
 	xor 	edx, edx
 	mov 	ecx, 4
 	Get_Header1:
+		push 	cx
+		push 	bx
+		mov 	al, [bus]
+		mov 	bl, [slot]
+		mov 	cl, [func]
 		call 	PCI_Read_Word
 		mov 	ebx, edx
 		mov 	WORD [edi + ebx], ax
+		pop 	cx
+		pop 	bx
 		add 	dl, 2
 		loop 	Get_Header1
 	mov 	ecx, 4
 	Get_Header2:
+		push 	cx
+		push 	bx
+		mov 	al, [bus]
+		mov 	bl, [slot]
+		mov 	cl, [func]
 		call 	PCI_Read_Word
 		mov 	ebx, edx
 		mov 	BYTE [edi + ebx], al
 		mov 	BYTE [edi + ebx + 1], ah
+		pop 	bx
+		pop 	cx
 		add 	dl, 2
 		loop 	Get_Header2
-		
+	
 	cmp 	WORD[HeaderMain.VendorID], 0xFFFF
 	je 		DeviceNoExist
 		
@@ -856,44 +943,305 @@ PCI_Get_Info:
 
 Get_Info1:
 	mov 	edi, HeaderType0
-	mov 	DWORD [PointerStruct], edi
+	mov 	DWORD [HeaderMain.HeadAddress], edi
 	mov 	ecx, 7
+	mov 	edx, 0x10
+	
 	loop_get_info1:
+		push 	cx
+		push 	bx
+		mov 	al, [bus]
+		mov 	bl, [slot]
+		mov 	cl, [func]
 		call 	PCI_Read_Word
 		mov 	eax, DWORD [PCI_Reg]
 		mov 	ebx, edx
+		sub 	ebx, 0x10
 		mov 	DWORD [edi + ebx], eax
+		pop 	bx
+		pop 	cx
 		add 	dl, 4
 		loop 	loop_get_info1
-		mov 	ebx, edx
+		
+		mov 	al, [bus]
+		mov 	bl, [slot]
+		mov 	cl, [func]
 		call 	PCI_Read_Word
 		mov 	eax, DWORD [PCI_Reg]
+		mov 	ebx, edx
+		sub 	ebx, 0x10
 		mov 	WORD [edi + ebx], ax
 		shl 	eax, 16
+		add 	ebx, 2
 		mov 	WORD [edi + ebx], ax
+		
+		mov 	al, [bus]
+		mov 	bl, [slot]
+		mov 	cl, [func]
 		add 	dl, 4
 		call 	PCI_Read_Word
 		mov 	eax, DWORD [PCI_Reg]
 		mov 	ebx, edx
+		sub 	ebx, 0x10
 		mov 	DWORD [edi + ebx], eax
+		
+		mov 	al, [bus]
+		mov 	bl, [slot]
+		mov 	cl, [func]
 		add 	dl, 4
 		call 	PCI_Read_Word
 		mov 	ebx, edx
+		sub 	ebx, 0x10
 		mov 	BYTE [edi + ebx], al
+		
 		add 	dl, 8
 		mov 	ecx, 2
-	loop_get_info2:
+	loop_get_info1.1:
+		push 	cx
+		push 	bx
+		mov 	al, [bus]
+		mov 	bl, [slot]
+		mov 	cl, [func]
 		call 	PCI_Read_Word
 		mov 	ebx, edx
+		sub 	ebx, 0x10
 		mov 	BYTE [edi + ebx], al
 		mov 	BYTE [edi + ebx + 1], ah
+		pop 	bx
+		pop 	cx
 		add 	dl, 2
-		loop 	loop_get_info2
+		loop 	loop_get_info1.1
+		
 		jmp 	RetGetInfo
+
 Get_Info2:
-	; TODO get Header Type 0x1 Informations
+	mov 	edi, HeaderType1
+	mov 	DWORD [HeaderMain.HeadAddress], edi
+	mov 	ecx, 2
+	mov 	edx, 0x10
+	
+	loop_get_info2:
+		push 	cx
+		push 	bx
+		mov 	al, [bus]
+		mov 	bl, [slot]
+		mov 	cl, [func]
+		call 	PCI_Read_Word
+		mov 	eax, DWORD [PCI_Reg]
+		mov 	ebx, edx
+		sub 	ebx, 0x10
+		mov 	DWORD [edi + ebx], eax
+		pop 	bx
+		pop 	cx
+		add 	dl, 4
+		loop 	loop_get_info2
+		
+		mov 	ecx, 3
+	loop_get_info2.1:
+		push 	cx
+		push 	bx
+		mov 	al, [bus]
+		mov 	bl, [slot]
+		mov 	cl, [func]
+		call 	PCI_Read_Word
+		mov 	ebx, edx
+		sub 	ebx, 0x10
+		mov 	BYTE [edi + ebx], al
+		mov 	BYTE [edi + ebx + 1], ah
+		pop 	bx
+		pop 	cx
+		add 	dl, 2
+		loop 	loop_get_info2.1
+		
+		mov 	ecx, 5
+	loop_get_info2.2:
+		push 	cx
+		push 	bx
+		mov 	al, [bus]
+		mov 	bl, [slot]
+		mov 	cl, [func]
+		call 	PCI_Read_Word
+		mov 	ebx, edx
+		sub 	ebx, 0x10
+		mov 	WORD [edi + ebx], ax
+		pop 	bx
+		pop 	cx
+		add 	dl, 2
+		loop 	loop_get_info2.2
+		
+		mov 	ecx, 2
+	loop_get_info2.3:
+		push 	cx
+		push 	bx
+		mov 	al, [bus]
+		mov 	bl, [slot]
+		mov 	cl, [func]
+		call 	PCI_Read_Word
+		mov 	eax, DWORD [PCI_Reg]
+		mov 	ebx, edx
+		sub 	ebx, 0x10
+		mov 	DWORD [edi + ebx], eax
+		pop 	bx
+		pop 	cx
+		add 	dl, 4
+		loop 	loop_get_info2.3
+		
+		mov 	ecx, 2
+	loop_get_info2.4:
+		push 	cx
+		push 	bx
+		mov 	al, [bus]
+		mov 	bl, [slot]
+		mov 	cl, [func]
+		call 	PCI_Read_Word
+		mov 	ebx, edx
+		sub 	ebx, 0x10
+		mov 	WORD [edi + ebx], ax
+		pop 	bx
+		pop 	cx
+		add 	dl, 2
+		loop 	loop_get_info2.4
+		
+		mov 	al, [bus]
+		mov 	bl, [slot]
+		mov 	cl, [func]
+		call 	PCI_Read_Word
+		mov 	ebx, edx
+		sub 	ebx, 0x10
+		mov 	BYTE [edi + ebx], al
+		
+		add 	dl, 4
+		mov 	al, [bus]
+		mov 	bl, [slot]
+		call 	PCI_Read_Word
+		mov 	eax, DWORD [PCI_Reg]
+		mov 	ebx, edx
+		sub 	ebx, 0x10
+		mov 	DWORD [edi + ebx], eax
+		
+		add 	dl, 4
+		mov 	al, [bus]
+		mov 	bl, [slot]
+		call 	PCI_Read_Word
+		mov 	ebx, edx
+		sub 	ebx, 0x10
+		mov 	BYTE [edi + ebx], al
+		mov 	BYTE [edi + ebx + 1], ah
+		
+		add 	dl, 2
+		mov 	al, [bus]
+		mov 	bl, [slot]
+		call 	PCI_Read_Word
+		mov 	ebx, edx
+		sub 	ebx, 0x10
+		mov 	WORD [edi + ebx], ax
+		
+		jmp 	RetGetInfo
+		
 Get_Info3:
-	; TODO get Header Type 0x2 Informations
+	mov 	edi, HeaderType2
+	mov 	DWORD [HeaderMain.HeadAddress], edi
+	
+	mov 	edx, 0x10
+	mov 	al, [bus]
+	mov 	bl, [slot]
+	mov 	cl, [func]
+	call 	PCI_Read_Word
+	mov 	eax, DWORD [PCI_Reg]
+	mov 	ebx, edx
+	sub 	ebx, 0x10
+	mov 	DWORD [edi + ebx], eax
+	
+	mov 	al, [bus]
+	mov 	bl, [slot]
+	mov 	cl, [func]
+	add 	dl, 4
+	call 	PCI_Read_Word
+	mov 	ebx, edx
+	sub 	ebx, 0x10
+	mov 	BYTE [edi + ebx], al
+	mov 	BYTE [edi + ebx + 1], ah
+	
+	mov 	al, [bus]
+	mov 	bl, [slot]
+	mov 	cl, [func]
+	add 	dl, 2
+	call 	PCI_Read_Word
+	mov 	ebx, edx
+	sub 	ebx, 0x10
+	mov 	WORD [edi + ebx], ax
+	
+	mov 	ecx, 2
+loop_get_info3:
+	push 	cx
+	push 	bx
+	mov 	al, [bus]
+	mov 	bl, [slot]
+	mov 	cl, [func]
+	add 	dl, 2
+	call 	PCI_Read_Word
+	mov 	ebx, edx
+	sub 	ebx, 0x10
+	mov 	BYTE [edi + ebx], al
+	mov 	BYTE [edi + ebx + 1], ah
+	pop 	bx
+	pop 	cx
+	loop 	loop_get_info3
+	
+	add 	dl, 2
+	mov 	ecx, 8
+loop_get_info3.1:
+	push 	cx
+	push 	bx
+	mov 	al, [bus]
+	mov 	bl, [slot]
+	mov 	cl, [func]
+	call 	PCI_Read_Word
+	mov 	eax, DWORD [PCI_Reg]
+	mov 	ebx, edx
+	sub 	ebx, 0x10
+	mov 	DWORD [edi + ebx], eax
+	pop 	bx
+	pop 	cx
+	add 	dl, 4
+	loop 	loop_get_info3.1
+	
+	mov 	al, [bus]
+	mov 	bl, [slot]
+	mov 	cl, [func]
+	call 	PCI_Read_Word
+	mov 	ebx, edx
+	sub 	ebx, 0x10
+	mov 	BYTE [edi + ebx], al
+	mov 	BYTE [edi + ebx + 1], ah
+	add 	dl, 2
+	
+	mov 	ecx, 3
+loop_get_info3.2:
+	push 	cx
+	push 	bx
+	mov 	al, [bus]
+	mov 	bl, [slot]
+	mov 	cl, [func]
+	call 	PCI_Read_Word
+	mov 	ebx, edx
+	sub 	ebx, 0x10
+	mov 	WORD [edi + ebx], ax
+	pop 	bx
+	pop 	cx
+	add 	dl, 2
+	loop 	loop_get_info3.2
+	
+	mov 	al, [bus]
+	mov 	bl, [slot]
+	mov 	cl, [func]
+	call 	PCI_Read_Word
+	mov 	eax, DWORD [PCI_Reg]
+	mov 	ebx, edx
+	sub 	ebx, 0x10
+	mov 	DWORD [edi + ebx], eax
+	
+	jmp 	RetGetInfo
 
 DeviceNoExist:
 	stc
@@ -901,12 +1249,13 @@ DeviceNoExist:
 	call 	Print_String
 RetGetInfo:
 	popad
-	mov 	esi, DWORD [PointerStruct]
+	mov 	esi, DWORD [HeaderMain.HeadAddress]
 ret
 
-MsgNoDevice  db "This PCI Device don´t Exist!",0
-PointerStruct dd 0x00000000
+MsgNoDevice  db "This PCI Device dont Exist!",0
+
 ; -----------------------------------------------------------------------------
+
 	
 ; Acesso das Strings de Interface -----------
 ; PROGCL  -> Índice das classes
@@ -924,6 +1273,69 @@ PCIListStr:
 PCIListStr1:
 		db "KiddieOS PCI List",13,10,13,10
 		db "|VENDOR |DEVICE  |DEVICE CLASS NAME   ",13,10,0
+		
+; ----------------------------------------
+; IDs de Dispositivos
+DevIDs:  
+	; Oracle VirtualBox
+	; ----------------------------------------------------------------------------------------
+	dd 0x12378086, 0x70008086, 0x71118086, 0xBEEF80EE, 0x20001022, 0xCAFE80EE, 0x003F106B, 0x71138086, 0x28298086, 0x00301000, 0x00541000
+	; ----------------------------------------------------------------------------------------
+	
+	; Real Hardware on Computer
+	; ----------------------------------------------------------------------------------------
+	dd 0x03641106, 0x13641106, 0x23641106, 0x33641106, 0x43641106, 0x53641106, 0x63641106, 0x73641106, 0xB1981106, 0x33711106, 0xA3641106
+	dd 0xC3641106, 0x05911106, 0x05711106, 0x30381106, 0x31041106, 0x33371106, 0x287E1106, 0x30651106, 0x337B1106, 0x337A1106, 0x32881106
+	; ----------------------------------------------------------------------------------------
+SizeDevID  dw ($-DevIDs)
+	
+Array_DevID dw ID1, ID2, ID3, ID4, ID5, ID6, ID7, ID8, ID9, ID10, ID11, ID12, ID13, ID14, ID15, ID16, ID17
+            dw ID18, ID19, ID20, ID21, ID22, ID23, ID24, ID25, ID26, ID27, ID28, ID29, ID30, ID31, ID32, ID33
+
+DevList:
+	; Oracle VirtualBox
+	; ----------------------------------------------------------------------------------------
+ID1		db " (440FX - 82441FX PMC [Natoma])",0                                 ; Intel Corporation
+ID2		db " (82371SB PIIX3 ISA [Natoma/Triton II])",0                         ; Intel Corporation
+ID3		db " (82371AB/EB/MB PIIX4 IDE)",0                                      ; Intel Corporation
+ID4		db " (VirtualBox Graphics Adapter)",0                                  ; InnoTek Systemberatung GmbH
+ID5		db " (79c970 [PCnet32 LANCE])",0                                       ; Advanced Micro Devices, Inc. [AMD]
+ID6		db " (VirtualBox Guest Service)",0                                     ; InnoTek Systemberatung GmbH
+ID7		db " (KeyLargo/Intrepid USB)",0                                        ; Apple Inc.
+ID8		db " (82371AB/EB/MB PIIX4 ACPI)",0                                     ; Intel Corporation
+ID9		db " (82801HM/HEM (ICH8M/ICH8M-E) SATA Controller [AHCI mode])",0      ; Intel Corporation
+ID10	db " (53c1030 PCI-X Fusion-MPT Dual Ultra320 SCSI)",0                  ; Broadcom / LSI
+ID11	db " (SAS1068 PCI-X Fusion-MPT SAS)",0                                 ; Broadcom / LSI
+	; ----------------------------------------------------------------------------------------
+	
+	; Real Hardware on Computer
+	; ----------------------------------------------------------------------------------------
+ID12    db " (CN896/VN896/P4M900)",0                         ; Via Technologies, Inc.
+ID13    db " (CN896/VN896/P4M900)",0                         ; Via technologies, Inc.
+ID14    db " (CN896/VN896/P4M900)",0                         ; Via technologies, Inc.
+ID15    db " (CN896/VN896/P4M900)",0                         ; Via technologies, Inc.
+ID16    db " (CN896/VN896/P4M900)",0                         ; Via technologies, Inc.
+ID17    db " (CN896/VN896/P4M900 I/O APIC Interrupt)",0     ; Via technologies, Inc.
+ID18    db " (CN896/VN896/P4M900 Security Device)",0         ; Via technologies, Inc.
+ID19    db " (CN896/VN896/P4M900)",0                         ; Via technologies, Inc.
+ID20    db " (VT8237/CX700/VX700-Series)",0                  ; Via technologies, Inc.
+ID21    db " (CN896/VN896/P4M900 [Chrome 9 HC])",0           ; Via technologies, Inc.
+ID22    db " (CN896/VN896/P4M900)",0                         ; Via technologies, Inc.
+ID23    db " (CN896/VN896/P4M900)",0                         ; Via technologies, Inc.
+ID24    db " (VT8237A SATA 2-Port)",0                        ; Via technologies, Inc.
+ID25    db " (VT82C586A/B/VT82C686/A/B/VT823x/A/C PIPC Bus Master IDE)",0     ; Via technologies, Inc.
+ID26    db " (VT82xx/62xx/VX700/8x0/900)",0                  ; Via technologies, Inc.
+ID27    db " (EHCI-Compliant Host-Controller)",0             ; Via technologies, Inc.
+ID28    db " (VT8237A PCI to ISA Bridge)",0                  ; Via technologies, Inc.
+ID29    db " (VT8237/8251 Ultra VLINK Controller)",0         ; Via technologies, Inc.
+ID30    db " (VT6102/VT6103 [Rhine-II])",0                   ; Via technologies, Inc.
+ID31    db " (VT8237A Host Bridge)",0                        ; Via technologies, Inc.
+ID32    db " (VT8237A PCI to PCI Bridge)",0                  ; Via technologies, Inc.
+ID33    db " (VX900/VT8xxx High Definition Audio)",0         ; Via technologies, Inc.
+	; ----------------------------------------------------------------------------------------
+
+StrPCI  db "[PCI]",0
+PCIChecked db " Verified!",0
 		
 		
 SUBVEC  dw PCICL0, PCICL1, PCICL2, PCICL3, PCICL4, PCICL5, PCICL6, PCICL7, PCICL8
@@ -1289,7 +1701,7 @@ CLASSF: db "Satellite Communication: ",0
 	
 CLASS10: db "Encryption: ",0
 
-	SBCLASS10_0    db "Network and Computing Encrpytion/Decryption",0
+	SBCLASS10_0    db "Network and Computing Encryption/Decryption",0
 	SBCLASS10_10   db "Entertainment Encryption/Decryption",0
 	
 	PCICL10  dw SBCLASS10_0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,SBCLASS10_10
