@@ -25,8 +25,12 @@ PCI_READ 		EQU 0x00
 PCI_WRITE 		EQU 0x01
 
 jmp 	Init_PCI
+jmp 	Get_Class_Name
+jmp 	Get_SubClass_Name
+jmp 	Get_Interface_Name
 jmp 	Get_Device_Name
-
+jmp 	Get_Vendor_Name
+jmp 	Get_Classes_Number
 
 HeaderMain:  ; Main Header for all Devices, Size=16 bytes + 4
 	.VendorID    dw 0
@@ -121,8 +125,6 @@ offs 	db 0
 pdata 	dd 0
 
 PCIEnabled  db 0
-
-
 
 
 Init_PCI:
@@ -363,7 +365,7 @@ Show_Name_Devices:
 	call 	PCI_Get_Classes
 	call 	PCI_Get_ProgIF
 	
-	mov 	si, StrPCI
+	mov 	esi, StrPCI
 	call 	Print_String
 	
 	mov 	si, ADDRCL
@@ -383,12 +385,12 @@ Show_Name_Devices:
 	pop 	bx
 	mov 	si, PROGCL
 	mov 	si, word[si + bx]   ; SI = SUBPIFx
-	cmp 	si, 0x0000
+	cmp 	si, 0
 	jz 		Ret_Names
 	mov 	bl, byte[SubClass]   
 	shl 	bx, 1
 	mov 	si, word[si + bx]   ; SI = PCISBx
-	cmp 	si, 0x0000
+	cmp 	si, 0
 	jz 		Ret_Names
 	mov 	bl, byte[ProgIF]
 	shl 	bx, 1
@@ -397,7 +399,7 @@ Show_Name_Devices:
 	call 	Print_String
 	jmp 	Return_Name_Device
 ShowOther:
-	mov 	si, OTHER
+	mov 	esi, OTHER
 	call 	Print_String
 Ret_Names:
 	mov 	al, [bus]
@@ -409,7 +411,7 @@ Ret_Names:
 	call 	Print_String
 	
 Return_Name_Device:
-	mov 	si, PCIChecked
+	mov 	esi, PCIChecked
 	call 	Print_String
 	
 	call 	Break_Line
@@ -423,8 +425,9 @@ Return_Name_Device:
 	pop 	bx
 ret
 
+; ROTINAS DO USUÁRIO +++++++++
 ; -----------------------------------------------------------------------------
-; Get_Device_Name - Pega o nome do dispositivo baseado no ID
+; Get_Device_Name - Retorna o nome do dispositivo baseado no ID
 ; IN:   AL  = Bus number
 ;		BL  = Device/Slot number
 ; 		CL  = Function
@@ -435,7 +438,7 @@ Get_Device_Name:
 	mov 	eax, DWORD [PCI_Reg]
 	mov 	esi, DevIDs
 	xor 	ebx, ebx
-	xor 	cx, cx
+	xor 	ecx, ecx
 	mov 	cx, WORD [SizeDevID]
 	shr 	cx, 2
 Loop_DevID:
@@ -456,6 +459,130 @@ Ret_GetDev:
 	mov 	esi, DWORD [AddrStr]
 ret
 AddrStr dd 0
+; -----------------------------------------------------------------------------
+
+
+; -----------------------------------------------------------------------------
+; Get_Class_Name - Retorna o nome de Classe do dispositivo
+; IN:   AL  = Bus number
+;		BL  = Device/Slot number
+; 		CL  = Function
+; OUT:	ESI = Endereço da String do Dispositivo.
+
+Get_Class_Name:
+	pushad
+	call 	PCI_Get_Classes
+	xor 	ebx, ebx
+	mov 	bl, BYTE [ClassCode]
+	shl 	ebx, 1
+	mov 	esi, ADDRCL
+	mov 	si, WORD [esi + ebx]
+	mov 	DWORD [AddrStr1], esi
+	popad
+	mov 	esi, DWORD [AddrStr1]
+ret
+AddrStr1  dd 0
+; -----------------------------------------------------------------------------
+
+
+; -----------------------------------------------------------------------------
+; Get_SubClass_Name - Retorna o nome de SubClasse do dispositivo
+; IN:   AL  = Bus number
+;		BL  = Device/Slot number
+; 		CL  = Function
+; OUT:	ESI = Endereço da String do Dispositivo.
+
+Get_SubClass_Name:
+	pushad
+	call 	PCI_Get_ClassCode
+	call 	PCI_Get_SubClass
+	xor 	ebx, ebx
+	mov 	bl, BYTE [ClassCode]
+	shl 	ebx, 1
+	mov 	esi, SUBVEC
+	mov 	si, WORD [esi + ebx]
+	mov 	bl, BYTE [SubClass]
+	shl 	ebx, 1
+	mov 	si, WORD [esi + ebx]
+	mov 	DWORD [AddrStr2], esi
+	popad
+	mov 	esi, DWORD [AddrStr2]
+ret
+AddrStr2  dd 0
+; -----------------------------------------------------------------------------
+
+
+; -----------------------------------------------------------------------------
+; Get_Interface_Name - Retorna o nome de Interface do dispositivo
+; IN:   AL  = Bus number
+;		BL  = Device/Slot number
+; 		CL  = Function
+; OUT:	ESI = Endereço da String do Dispositivo.
+
+Get_Interface_Name:
+	pushad
+	call 	PCI_Get_ClassCode
+	call 	PCI_Get_SubClass
+	call 	PCI_Get_ProgIF
+	xor 	ebx, ebx
+	mov 	bl, BYTE [ClassCode]
+	shl 	ebx, 1
+	mov 	esi, PROGCL
+	mov 	si, WORD [esi + ebx]   ; SI = SUBPIFx
+	cmp 	si, 0xFFFF
+	jz 		Ret_Intr_Error
+	mov 	bl, BYTE [SubClass]   
+	shl 	ebx, 1
+	mov 	si, word[esi + ebx]      ; SI = PCISBx
+	cmp 	si, 0xFFFF
+	jz 		Ret_Intr_Error
+	mov 	bl, BYTE [ProgIF]
+	shl 	ebx, 1
+	mov 	si, word[esi + ebx]      ; SI = PROGIFx.x_x
+	jmp 	Ret_Intr_Name
+Ret_Intr_Error:
+	mov 	esi, 0xFFFFFFFF
+Ret_Intr_Name:
+	mov 	DWORD [AddrStr3], esi
+	popad
+	mov 	esi, DWORD [AddrStr3]
+ret
+AddrStr3  dd 0
+; -----------------------------------------------------------------------------
+
+
+; -----------------------------------------------------------------------------
+; Get_Vendor_Name - Retorna o nome de fabricante do dispositivo
+; IN:   AL  = Bus number
+;		BL  = Device/Slot number
+; 		CL  = Function
+; OUT:	ESI = Endereço da String do Fabricante.
+
+Get_Vendor_Name:
+	pushad
+	
+	; TODO primeiro fazer todos os nomes de fabricantes,
+	; Depois vir para esta rotina, igual as rotinas acima.
+	
+	popad
+ret
+
+; -----------------------------------------------------------------------------
+
+; -----------------------------------------------------------------------------
+; Get_Classes_Number - Retorna o número de Classe e SubClasse
+; IN:   AL  = Bus number
+;		BL  = Device/Slot number
+; 		CL  = Function
+; OUT:	AX = Número de Classe e SubClasse
+Get_Classes_Number:
+	pushad
+	
+	call 	PCI_Get_Classes
+	
+	popad
+	mov 	ax, WORD [Classes]
+ret
 ; -----------------------------------------------------------------------------
 
 	; Acesso das Strings de Interface -----------
@@ -1276,15 +1403,8 @@ MsgNoDevice  db "This PCI Device dont Exist!",0
 ; Acesso das Strings de SubClasses
 ; SUBVEC  -> Índice das Classes com vetor de SubClasses
 ; PCICLx  -> Índice das SubClasses dentro de uma Classe
-	
-PCIListStr:
-		db "KiddieOS PCI List",13,10,13,10
-		db "BUS     |DEV     |FUNC    |VENDOR  |DEVICE  |DEVICE CLASS NAME   ",13,10,0
 		
-PCIListStr1:
-		db "KiddieOS PCI List",13,10,13,10
-		db "|VENDOR |DEVICE  |DEVICE CLASS NAME   ",13,10,0
-		
+	 
 ; ----------------------------------------
 ; IDs de Dispositivos
 DevIDs:  
@@ -1302,8 +1422,8 @@ SizeDevID  dw ($-DevIDs)
 	
 Array_DevID dw ID1, ID2, ID3, ID4, ID5, ID6, ID7, ID8, ID9, ID10, ID11, ID12, ID13, ID14, ID15, ID16, ID17
             dw ID18, ID19, ID20, ID21, ID22, ID23, ID24, ID25, ID26, ID27, ID28, ID29, ID30, ID31, ID32, ID33
-
-DevList:
+		
+		 
 	; Oracle VirtualBox
 	; ----------------------------------------------------------------------------------------
 ID1		db " (440FX - 82441FX PMC [Natoma])",0                                 ; Intel Corporation
@@ -1344,43 +1464,28 @@ ID31    db " (VT8237A Host Bridge)",0                        ; Via technologies,
 ID32    db " (VT8237A PCI to PCI Bridge)",0                  ; Via technologies, Inc.
 ID33    db " (VX900/VT8xxx High Definition Audio)",0         ; Via technologies, Inc.
 	; ----------------------------------------------------------------------------------------
-
+   
+PCIListStr:
+		db "KiddieOS PCI List",13,10,13,10
+		db "BUS     |DEV     |FUNC    |VENDOR  |DEVICE  |DEVICE CLASS NAME   ",13,10,0
+		
+PCIListStr1:
+		db "KiddieOS PCI List",13,10,13,10
+		db "|VENDOR |DEVICE  |DEVICE CLASS NAME   ",13,10,0		
+		
 StrPCI  db "[PCI]",0
 PCIChecked db " Verified!",0
-		
-		
-SUBVEC  dw PCICL0, PCICL1, PCICL2, PCICL3, PCICL4, PCICL5, PCICL6, PCICL7, PCICL8
-        dw PCICL9, PCICLA, PCICLB, PCICLC, PCICLD, PCICLE, PCICLF, PCICL10, PCICL11
-		
-
-ADDRCL  dw CLASS0,  CLASS1,  CLASS2,  CLASS3,  CLASS4, CLASS5, CLASS6, CLASS7 
-        dw CLASS8,  CLASS9,  CLASSA,  CLASSB,  CLASSC, CLASSD, CLASSE, CLASSF
-		dw CLASS10, CLASS11, CLASS12, CLASS13
-		TIMES (0x3F - 0x14) dw 0x0000
-		dw CLASS40
-		TIMES (0xFE - 0x41) dw 0x0000
-		dw CLASSFF	
-		
-SUBPIF1  dw 0,PCISB0,0,0,0,PCISB1,PCISB2,PCISB3,PCISB4,0           ; Para SubClasses da Classe 1
-SUBPIF3  dw PCISB5,0,0,0                                           ; Para SubClasses da Classe 3
-SUBPIF6  dw 0,0,0,0,PCISB6,0,0,0,PCISB7,PCISB8,0,0                 ; Para SubClasses da Classe 6
-SUBPIF7  dw PCISB9,PCISB10,0,PCISB11,0,0,0                         ; Para SubClasses da Classe 7
-SUBPIF8  dw PCISB12,PCISB13,PCISB14,PCISB15,0,0,0,0                ; Para SubClasses da Classe 8
-SUBPIF9  dw 0,0,0,0,PCISB16,0                                      ; Para SubClasses da Classe 9
-SUBPIFC  dw PCISB17,0,0,PCISB18,0,0,0,PCISB19,0,0,0                ; Para SubClasses da Classe 12
-
-PROGCL   dw 0,SUBPIF1,0,SUBPIF3,0,0,SUBPIF6,SUBPIF7,SUBPIF8        ; Acessada por Classes
-         dw SUBPIF9,0,0,SUBPIFC,0,0,0,0,0,0                                          
-	
-PCI_Names:
-CLASS0: db "Unclassified: ",0
+    
+		 
+PCI_Names:		
+CLASS0 db "Unclassified: ",0
 	
 	SBCLASS0_0 db "Non-VGA-Compatible Unclassified Device",0
 	SBCLASS0_1 db "VGA-Compatible Unclassified Device",0
 	
 	PCICL0  dw SBCLASS0_0, SBCLASS0_1
 
-CLASS1: db  "Mass Storage: ",0
+CLASS1 db  "Mass Storage: ",0
 	
 	SBCLASS1_0  db "SCSI Bus Controller ",0	
 	SBCLASS1_1  db "IDE Controller",0
@@ -1435,7 +1540,7 @@ CLASS1: db  "Mass Storage: ",0
 		
 	PCICL1 	dw SBCLASS1_0,SBCLASS1_1,SBCLASS1_2,SBCLASS1_3,SBCLASS1_4,SBCLASS1_5,SBCLASS1_6,SBCLASS1_7,SBCLASS1_8
 	
-CLASS2: db "Network: ",0
+CLASS2 db "Network: ",0
 
 	SBCLASS2_0  db "Ethernet Controller",0
 	SBCLASS2_1  db "Token Ring Controller",0
@@ -1449,7 +1554,7 @@ CLASS2: db "Network: ",0
 
 	PCICL2 	dw SBCLASS2_0,SBCLASS2_1,SBCLASS2_2,SBCLASS2_3,SBCLASS2_4,SBCLASS2_5,SBCLASS2_6,SBCLASS2_7,SBCLASS2_8
 	
-CLASS3: db "Display: ",0
+CLASS3 db "Display: ",0
 
 	SBCLASS3_0  db "VGA Compatible Controller",0
 		
@@ -1741,6 +1846,29 @@ CLASSFF: db "Unassigned Class (Vendor specific)",0
 
 OTHER   db "Other",0
 
+     
+
+SUBVEC  dw PCICL0, PCICL1, PCICL2, PCICL3, PCICL4, PCICL5, PCICL6, PCICL7, PCICL8
+        dw PCICL9, PCICLA, PCICLB, PCICLC, PCICLD, PCICLE, PCICLF, PCICL10, PCICL11
+		
+ADDRCL  dw CLASS0,CLASS1,CLASS2,CLASS3,CLASS4,CLASS5,CLASS6,CLASS7 
+        dw CLASS8,CLASS9,CLASSA,CLASSB,CLASSC,CLASSD,CLASSE,CLASSF
+		dw CLASS10, CLASS11, CLASS12, CLASS13
+		;TIMES (0x3F - 0x14) dw 0x0000
+		dw CLASS40
+		;TIMES (0xFE - 0x41) dw 0x0000
+		dw CLASSFF		
+		
+SUBPIF1  dw 0xFFFF,PCISB0,0xFFFF,0xFFFF,0xFFFF,PCISB1,PCISB2,PCISB3,PCISB4,0xFFFF                      ; Para SubClasses da Classe 1
+SUBPIF3  dw PCISB5,0xFFFF,0xFFFF,0xFFFF                                                                ; Para SubClasses da Classe 3
+SUBPIF6  dw 0xFFFF,0xFFFF,0xFFFF,0xFFFF,PCISB6,0xFFFF,0xFFFF,0xFFFF,PCISB7,PCISB8,0xFFFF,0xFFFF        ; Para SubClasses da Classe 6
+SUBPIF7  dw PCISB9,PCISB10,0xFFFF,PCISB11,0xFFFF,0xFFFF,0xFFFF                                         ; Para SubClasses da Classe 7
+SUBPIF8  dw PCISB12,PCISB13,PCISB14,PCISB15,0xFFFF,0xFFFF,0xFFFF,0xFFFF                                ; Para SubClasses da Classe 8
+SUBPIF9  dw 0xFFFF,0xFFFF,0xFFFF,0xFFFF,PCISB16,0xFFFF                                                 ; Para SubClasses da Classe 9
+SUBPIFC  dw PCISB17,0xFFFF,0xFFFF,PCISB18,0xFFFF,0xFFFF,0xFFFF,PCISB19,0xFFFF,0xFFFF,0xFFFF            ; Para SubClasses da Classe 12
+
+PROGCL   dw 0xFFFF,SUBPIF1,0xFFFF,SUBPIF3,0xFFFF,0xFFFF,SUBPIF6,SUBPIF7,SUBPIF8                        ; Acessada por Classes
+         dw SUBPIF9,0xFFFF,0xFFFF,SUBPIFC,0xFFFF,0xFFFF,0xFFFF,0xFFFF,0xFFFF,0xFFFF			 
 ; -----------------------------------------------------------------------------
 ;Configuration Mechanism One has two IO port rages associated with it.
 ;The address port (0xcf8-0xcfb) and the data port (0xcfc-0xcff).
